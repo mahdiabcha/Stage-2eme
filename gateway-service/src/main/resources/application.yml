@@ -1,0 +1,48 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway-service
+  main:
+    web-application-type: reactive
+  cloud:
+    gateway:
+      routes:
+        - id: auth
+          uri: http://auth-service:8081
+          predicates:
+            - Path=/auth/**
+
+        - id: programs
+          uri: http://program-catalog-service:8085
+          predicates: 
+            - Path=/programs/** 
+
+        - id: profiles
+          uri: http://profile-service:8083
+          predicates:
+            - Path=/profiles/** 
+
+        - id: enrollments
+          uri: http://enrollment-service:8084
+          predicates:
+            - Path=/enrollments/**,/programs/*/eligibility/**,/programs/*/enroll
+
+      default-filters:
+        - RemoveRequestHeader=Cookie
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  jwt:
+    secret: ${APP_JWT_SECRET:a6f3d8c2b7944f12a17d05c6b9f82a7d3e1f74c5a94e89b15b3f0c7e1a2d9f5c}
+    public-paths:
+      - /auth/login
+      - /auth/register
+      - /auth/hello
+      - /actuator/health

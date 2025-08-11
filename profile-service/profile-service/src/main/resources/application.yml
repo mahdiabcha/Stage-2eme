@@ -1,0 +1,13 @@
+server:
+  port: 8083
+spring:
+  application.name: profile-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/profiledb}
+    username: ${SPRING_DATASOURCE_USERNAME:app}
+    password: ${SPRING_DATASOURCE_PASSWORD:app}
+  jpa:
+    hibernate.ddl-auto: update
+    open-in-view: false
+    properties.hibernate.jdbc.time_zone: UTC
+management.endpoints.web.exposure.include: health,info

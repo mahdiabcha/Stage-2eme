@@ -1,0 +1,27 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/authdb}
+    username: ${SPRING_DATASOURCE_USERNAME:app}
+    password: ${SPRING_DATASOURCE_PASSWORD:app}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  jwt:
+    secret: ${APP_JWT_SECRET:a6f3d8c2b7944f12a17d05c6b9f82a7d3e1f74c5a94e89b15b3f0c7e1a2d9f5c}
+    expiration: ${APP_JWT_EXPIRATION:3600000}  # 1h en ms

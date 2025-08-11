@@ -1,0 +1,87 @@
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: pg
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: authdb
+    ports: ["5432:5432"]
+    volumes: [pg_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d authdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbit
+    environment:
+      RABBITMQ_DEFAULT_USER: app
+      RABBITMQ_DEFAULT_PASS: app
+    ports: ["5672:5672", "15672:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  auth-service:
+    build:
+      context: ../auth-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/authdb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: app
+      APP_JWT_SECRET: change-this-dev-secret-please-32+chars
+    ports: ["8081:8081"]
+
+  gateway-service:
+    build:
+      context: ../gateway-service
+    depends_on:
+      auth-service:
+        condition: service_started
+    environment:
+      APP_JWT_SECRET: change-this-dev-secret-please-32+chars
+    ports: ["8080:8080"]
+  
+  program-catalog-service:
+    build: { context: ../program-catalog-service }
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/programdb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: app
+    ports: ["8085:8085"]
+
+  profile-service:
+    build: { context: ../profile-service }
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/profiledb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: app
+    ports: ["8083:8083"]
+
+  enrollment-service:
+    build: { context: ../enrollment-service }
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/enrollmentdb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: app
+      PROGRAM_CATALOG_URL: http://program-catalog-service:8085
+      PROFILE_URL: http://profile-service:8083
+    ports: ["8084:8084"]
+
+volumes:
+  pg_data:
