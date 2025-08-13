@@ -83,5 +83,33 @@ services:
       PROFILE_URL: http://profile-service:8083
     ports: ["8084:8084"]
 
+  payment-service:
+    build: { context: ../payment-service }
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/paymentdb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: app
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: app
+      SPRING_RABBITMQ_PASSWORD: app
+    ports:
+      - "8086:8086"
+      
+  mockbank-service:
+    build: { context: ../mockbank-service }
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: app
+      SPRING_RABBITMQ_PASSWORD: app
+    ports:
+      - "8087:8087"
+
 volumes:
   pg_data:
