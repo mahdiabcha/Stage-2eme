@@ -5,10 +5,10 @@ spring:
   application:
     name: mockbank-service
   rabbitmq:
-    host: ${SPRING_RABBITMQ_HOST:localhost}
+    host: ${SPRING_RABBITMQ_HOST:rabbitmq}
     port: ${SPRING_RABBITMQ_PORT:5672}
-    username: ${SPRING_RABBITMQ_USERNAME:guest}
-    password: ${SPRING_RABBITMQ_PASSWORD:guest}
+    username: ${SPRING_RABBITMQ_USERNAME:app}
+    password: ${SPRING_RABBITMQ_PASSWORD:app}
 
 management:
   endpoints:

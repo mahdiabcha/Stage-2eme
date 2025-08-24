@@ -27,3 +27,5 @@ management:
     web:
       exposure:
         include: health,info
+clients:
+  programBaseUrl: ${PROGRAM_URL:http://program-catalog-service:8085}

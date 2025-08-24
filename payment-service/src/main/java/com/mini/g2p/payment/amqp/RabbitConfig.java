@@ -1,62 +1,44 @@
 package com.mini.g2p.payment.amqp;
 
 import org.springframework.amqp.core.*;
+import org.springframework.amqp.rabbit.annotation.EnableRabbit;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
-import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
+@EnableRabbit
 public class RabbitConfig {
   public static final String EXCHANGE = "g2p.payments";
   public static final String RK_INSTR = "payment.instruction";
   public static final String RK_STATUS = "payment.status";
-  public static final String Q_INSTR = "q.payment.instructions";
+  public static final String Q_INSTR  = "q.payment.instructions";
   public static final String Q_STATUS = "q.payment.status";
 
-  // --- Topology ---
-  @Bean
-  public TopicExchange paymentsExchange() { return new TopicExchange(EXCHANGE, true, false); }
+  @Bean TopicExchange paymentsExchange() { return new TopicExchange(EXCHANGE, true, false); }
 
-  @Bean
-  public Queue instructionsQueue() { return QueueBuilder.durable(Q_INSTR).build(); }
+  @Bean Queue instructionQueue() { return QueueBuilder.durable(Q_INSTR).build(); }
+  @Bean Queue statusQueue()      { return QueueBuilder.durable(Q_STATUS).build(); }
 
-  @Bean
-  public Queue statusQueue() { return QueueBuilder.durable(Q_STATUS).build(); }
-
-  @Bean
-  public Binding bindInstructions(TopicExchange ex, Queue instructionsQueue) {
-    return BindingBuilder.bind(instructionsQueue).to(ex).with(RK_INSTR);
+  @Bean Binding bindInstruction(Queue instructionQueue, TopicExchange paymentsExchange) {
+    return BindingBuilder.bind(instructionQueue).to(paymentsExchange).with(RK_INSTR);
+  }
+  @Bean Binding bindStatus(Queue statusQueue, TopicExchange paymentsExchange) {
+    return BindingBuilder.bind(statusQueue).to(paymentsExchange).with(RK_STATUS);
   }
 
-  @Bean
-  public Binding bindStatus(TopicExchange ex, Queue statusQueue) {
-    return BindingBuilder.bind(statusQueue).to(ex).with(RK_STATUS);
+  @Bean Jackson2JsonMessageConverter messageConverter() { return new Jackson2JsonMessageConverter(); }
+
+  @Bean RabbitTemplate rabbitTemplate(ConnectionFactory cf, Jackson2JsonMessageConverter mc) {
+    var tpl = new RabbitTemplate(cf); tpl.setMessageConverter(mc); return tpl;
   }
 
-  // --- JSON converter for template & listeners ---
-  @Bean
-  public MessageConverter jsonMessageConverter() {
-    return new Jackson2JsonMessageConverter();
-  }
-
-  @Bean
-  public RabbitTemplate rabbitTemplate(ConnectionFactory cf, MessageConverter mc) {
-    RabbitTemplate tpl = new RabbitTemplate(cf);
-    tpl.setMessageConverter(mc);
-    return tpl;
-  }
-
-  /** This bean name is what @RabbitListener uses by default */
-  @Bean
-  public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
-      ConnectionFactory cf, MessageConverter mc) {
-    SimpleRabbitListenerContainerFactory f = new SimpleRabbitListenerContainerFactory();
-    f.setConnectionFactory(cf);
-    f.setMessageConverter(mc);
-    return f;
+  @Bean SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+      ConnectionFactory cf, Jackson2JsonMessageConverter mc) {
+    var f = new SimpleRabbitListenerContainerFactory();
+    f.setConnectionFactory(cf); f.setMessageConverter(mc); return f;
   }
 }

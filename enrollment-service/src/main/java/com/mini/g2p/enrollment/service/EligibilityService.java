@@ -10,29 +10,43 @@ import java.util.*;
 
 @Service
 public class EligibilityService {
-  private final ObjectMapper om = new ObjectMapper();
 
-  public record Result(boolean eligible, List<String> reasons) {}
+  private final ObjectMapper objectMapper = new ObjectMapper();
 
-  public Result evaluate(String rulesJson, Map<String, Object> profileCtx) {
-    if (rulesJson == null || rulesJson.isBlank()) return new Result(true, List.of());
+  public static class Result {
+    public final boolean eligible;
+    public final String reason;
+    public Result(boolean eligible, String reason){ this.eligible = eligible; this.reason = reason; }
+  }
+
+  public Result evaluate(Map<String,Object> profileCtx, String rulesJson){
+    if (rulesJson == null || rulesJson.isBlank()) return new Result(true, "No rules");
+    String s = rulesJson.trim();
+
+    // Cheap fast-path for "TRUE"
+    String upper = s.replaceAll("\\s+","").toUpperCase();
+    if (upper.equals("TRUE") || upper.contains("\"TYPE\":\"TRUE\"") || upper.endsWith(":TRUE}") || upper.contains(":TRUE")) {
+      return new Result(true, "TRUE");
+    }
+
+    // Try to parse JSON rules
     try {
-      JsonNode root = om.readTree(rulesJson);
+      JsonNode node = objectMapper.readTree(s);
       List<String> reasons = new ArrayList<>();
-      boolean pass = evalNode(root, profileCtx, reasons);
-      return new Result(pass, reasons);
+      boolean ok = evalNode(node, profileCtx, reasons);
+      return new Result(ok, ok ? "OK" : String.join("; ", reasons));
     } catch (Exception e) {
-      return new Result(false, List.of("Invalid eligibility configuration"));
+      // If not JSON, be conservative
+      return new Result(false, "Invalid rules");
     }
   }
 
   private boolean evalNode(JsonNode node, Map<String, Object> ctx, List<String> reasons) {
     if (node == null || node.isNull()) return false;
 
-    // Composite node: { "type": "AND|OR|NOT", "rules": [...] , "message": "..." }
     if (node.hasNonNull("type") && node.has("rules")) {
       String type = node.get("type").asText();
-      JsonNode rules = node.get("rules"); // may be array OR single object
+      JsonNode rules = node.get("rules");
 
       return switch (type) {
         case "AND" -> {
@@ -42,7 +56,7 @@ public class EligibilityService {
           } else if (rules != null && !rules.isNull()) {
             all &= evalNode(rules, ctx, reasons);
           } else {
-            all = false; // no rules -> fail
+            all = false;
           }
           yield all;
         }
@@ -64,12 +78,11 @@ public class EligibilityService {
           yield any;
         }
         case "NOT" -> {
-          // For NOT we evaluate the first (or only) child, then invert
           JsonNode child = null;
           if (rules != null && rules.isArray() && rules.size() > 0) child = rules.get(0);
           else if (rules != null && !rules.isNull()) child = rules;
 
-          if (child == null) yield true; // NOT of nothing -> true
+          if (child == null) yield true;
           List<String> r = new ArrayList<>();
           boolean ok = evalNode(child, ctx, r);
           if (ok) {
@@ -82,15 +95,11 @@ public class EligibilityService {
       };
     }
 
-    // Leaf rule: { field, op, value?, message? }
     String field = node.path("field").asText(null);
     String op = node.path("op").asText(null);
     String msg = node.path("message").asText("Rule failed");
 
-    if (op == null) { // malformed rule
-      reasons.add(msg);
-      return false;
-    }
+    if (op == null) { reasons.add(msg); return false; }
 
     Object actual = (field == null) ? null : ctx.get(field);
 
@@ -129,68 +138,48 @@ public class EligibilityService {
     return cmp(actual, min) >= 0 && cmp(actual, max) <= 0;
   }
 
-  /**
-   * Compare Object actual against expected JsonNode.
-   * - Numbers: numeric compare
-   * - Booleans: true > false, equals if same
-   * - Others: case-insensitive string compare
-   * Returns: negative if actual < expected, 0 if equal, positive if actual > expected, -1 on incompatible.
-   */
   private int cmp(Object actual, JsonNode expected) {
     if (actual == null || expected == null || expected.isNull()) return -1;
-
-    // Number compare
     if (actual instanceof Number aN) {
       if (!expected.isNumber()) return -1;
-      double a = aN.doubleValue();
-      double b = expected.asDouble();
-      return Double.compare(a, b);
+      return Double.compare(aN.doubleValue(), expected.asDouble());
     }
-
-    // Boolean compare
     if (actual instanceof Boolean aB) {
       if (!expected.isBoolean()) return -1;
-      boolean b = expected.asBoolean();
-      return Boolean.compare(aB, b);
+      return Boolean.compare(aB, expected.asBoolean());
     }
-
-    // Fallback: string compare (case-insensitive)
     return String.valueOf(actual).compareToIgnoreCase(expected.asText());
   }
 
-  // helper for building context from profile JSON
   public Map<String, Object> contextFromProfile(JsonNode prof) {
     Map<String, Object> m = new HashMap<>();
     if (prof == null) return m;
 
-    m.put("username", text(prof, "username"));
-    m.put("gender", text(prof, "gender"));
-    m.put("governorate", text(prof, "governorate"));
-    m.put("householdSize", num(prof, "householdSize"));
-    m.put("incomeMonthly", num(prof, "incomeMonthly"));
-    m.put("kycVerified", bool(prof, "kycVerified"));
+    putText(m, "username", prof, "username");
+    putText(m, "gender", prof, "gender");
+    putText(m, "governorate", prof, "governorate");
+    putNum(m, "householdSize", prof, "householdSize");
+    putNum(m, "incomeMonthly", prof, "incomeMonthly");
+    putBool(m, "kycVerified", prof, "kycVerified");
 
-    // compute age from birthDate (ISO-8601: yyyy-MM-dd)
-    String bd = text(prof, "birthDate");
+    String bd = prof.has("birthDate") && !prof.get("birthDate").isNull() ? prof.get("birthDate").asText(null) : null;
     if (bd != null) {
       try {
         var ld = LocalDate.parse(bd);
         int age = Period.between(ld, LocalDate.now()).getYears();
         m.put("age", age);
-      } catch (Exception ignored) {
-        // ignore parse errors: age will be absent
-      }
+      } catch (Exception ignored) { }
     }
     return m;
   }
 
-  private String text(JsonNode n, String k) {
-    return n.has(k) && !n.get(k).isNull() ? n.get(k).asText() : null;
-    }
-  private Double num(JsonNode n, String k) {
-    return n.has(k) && n.get(k).isNumber() ? n.get(k).asDouble() : null;
+  private void putText(Map<String,Object> m, String key, JsonNode n, String k) {
+    if (n.has(k) && !n.get(k).isNull()) m.put(key, n.get(k).asText());
   }
-  private Boolean bool(JsonNode n, String k) {
-    return n.has(k) && n.get(k).isBoolean() ? n.get(k).asBoolean() : null;
+  private void putNum(Map<String,Object> m, String key, JsonNode n, String k) {
+    if (n.has(k) && n.get(k).isNumber()) m.put(key, n.get(k).asDouble());
+  }
+  private void putBool(Map<String,Object> m, String key, JsonNode n, String k) {
+    if (n.has(k) && n.get(k).isBoolean()) m.put(key, n.get(k).asBoolean());
   }
 }

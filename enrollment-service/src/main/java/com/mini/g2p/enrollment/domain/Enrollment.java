@@ -4,36 +4,94 @@ import jakarta.persistence.*;
 import java.time.Instant;
 
 @Entity
+@Table(name = "enrollments",
+       indexes = {
+         @Index(name = "idx_enroll_program", columnList = "programId"),
+         @Index(name = "idx_enroll_user", columnList = "citizenUsername")
+       })
 public class Enrollment {
+
+  public enum Status { PENDING, APPROVED, REJECTED }
+
   @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
+
   private Long programId;
+
+  @Column(length = 100, nullable = false)
   private String citizenUsername;
 
+  // Legacy DB column that is NOT NULL -> must be set too
+  @Column(name = "username", length = 100, nullable = false)
+  private String username;
+
   @Enumerated(EnumType.STRING)
+  @Column(length = 20, nullable = false)
   private Status status = Status.PENDING;
 
-  private Boolean eligibilityPassed;
-  @Column(columnDefinition="TEXT") private String eligibilityReasonsJson;
-  @Column(columnDefinition="TEXT") private String profileSnapshotJson;
+  @Column(length = 1000)
+  private String note;
 
-  private Instant createdAt = Instant.now();
-  private Instant decidedAt;
-  private String decidedBy;
-  @Column(length = 1000) private String decisionNote;
+  @Column(name = "eligibility_passed", nullable = false)
+  private boolean eligibilityPassed;
 
-  public enum Status { PENDING, AUTO_REJECTED, APPROVED, REJECTED }
+  @Column(name = "eligibility_reason", length = 500)
+  private String eligibilityReason;
 
-  // getters/setters...
-  public Long getId(){return id;} public void setId(Long id){this.id=id;}
-  public Long getProgramId(){return programId;} public void setProgramId(Long p){this.programId=p;}
-  public String getCitizenUsername(){return citizenUsername;} public void setCitizenUsername(String u){this.citizenUsername=u;}
-  public Status getStatus(){return status;} public void setStatus(Status s){this.status=s;}
-  public Boolean getEligibilityPassed(){return eligibilityPassed;} public void setEligibilityPassed(Boolean e){this.eligibilityPassed=e;}
-  public String getEligibilityReasonsJson(){return eligibilityReasonsJson;} public void setEligibilityReasonsJson(String j){this.eligibilityReasonsJson=j;}
-  public String getProfileSnapshotJson(){return profileSnapshotJson;} public void setProfileSnapshotJson(String j){this.profileSnapshotJson=j;}
-  public Instant getCreatedAt(){return createdAt;} public void setCreatedAt(Instant i){this.createdAt=i;}
-  public Instant getDecidedAt(){return decidedAt;} public void setDecidedAt(Instant i){this.decidedAt=i;}
-  public String getDecidedBy(){return decidedBy;} public void setDecidedBy(String d){this.decidedBy=d;}
-  public String getDecisionNote(){return decisionNote;} public void setDecisionNote(String n){this.decisionNote=n;}
+  @Column(name = "eligibility_checked_at")
+  private Instant eligibilityCheckedAt;
+
+  @Column(nullable = false, updatable = false)
+  private Instant createdAt;
+
+  @Column(nullable = false)
+  private Instant updatedAt;
+
+  @PrePersist
+  public void onCreate() {
+    Instant now = Instant.now();
+    createdAt = now;
+    updatedAt = now;
+  }
+
+  @PreUpdate
+  public void onUpdate() {
+    updatedAt = Instant.now();
+  }
+
+  // getters & setters
+  public Long getId() { return id; }
+  public void setId(Long id) { this.id = id; }
+
+  public Long getProgramId() { return programId; }
+  public void setProgramId(Long programId) { this.programId = programId; }
+
+  public String getCitizenUsername() { return citizenUsername; }
+  public void setCitizenUsername(String citizenUsername) { 
+    this.citizenUsername = citizenUsername; 
+  }
+
+  public String getUsername() { return username; }
+  public void setUsername(String username) { this.username = username; }
+
+  public Status getStatus() { return status; }
+  public void setStatus(Status status) { this.status = status; }
+
+  public String getNote() { return note; }
+  public void setNote(String note) { this.note = note; }
+
+  public boolean isEligibilityPassed() { return eligibilityPassed; }
+  public void setEligibilityPassed(boolean eligibilityPassed) { this.eligibilityPassed = eligibilityPassed; }
+
+  public String getEligibilityReason() { return eligibilityReason; }
+  public void setEligibilityReason(String eligibilityReason) { this.eligibilityReason = eligibilityReason; }
+
+  public Instant getEligibilityCheckedAt() { return eligibilityCheckedAt; }
+  public void setEligibilityCheckedAt(Instant eligibilityCheckedAt) { this.eligibilityCheckedAt = eligibilityCheckedAt; }
+
+  public Instant getCreatedAt() { return createdAt; }
+  public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+
+  public Instant getUpdatedAt() { return updatedAt; }
+  public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
 }
