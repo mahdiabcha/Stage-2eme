@@ -21,9 +21,6 @@ public class Enrollment {
   @Column(length = 100, nullable = false)
   private String citizenUsername;
 
-  // Legacy DB column that is NOT NULL -> must be set too
-  @Column(name = "username", length = 100, nullable = false)
-  private String username;
 
   @Enumerated(EnumType.STRING)
   @Column(length = 20, nullable = false)
@@ -70,9 +67,6 @@ public class Enrollment {
   public void setCitizenUsername(String citizenUsername) { 
     this.citizenUsername = citizenUsername; 
   }
-
-  public String getUsername() { return username; }
-  public void setUsername(String username) { this.username = username; }
 
   public Status getStatus() { return status; }
   public void setStatus(Status status) { this.status = status; }

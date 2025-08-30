@@ -1,75 +1,57 @@
 package com.mini.g2p.gateway.security;
 
+import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
+import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.server.ServerWebExchange;
-import org.springframework.cloud.gateway.filter.GlobalFilter;
 import reactor.core.publisher.Mono;
-
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
+@org.springframework.boot.context.properties.EnableConfigurationProperties(JwtProps.class)
 public class JwtGatewayFilter implements GlobalFilter, Ordered {
 
-  private final JwtProps props;
   private final JwtUtil jwt;
+  private final JwtProps props;
   private final AntPathMatcher matcher = new AntPathMatcher();
 
-  public JwtGatewayFilter(JwtProps props, JwtUtil jwt) {
-    this.props = props;
-    this.jwt = jwt;
-  }
+  public JwtGatewayFilter(JwtUtil jwt, JwtProps props){ this.jwt=jwt; this.props=props; }
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, org.springframework.cloud.gateway.filter.GatewayFilterChain chain) {
     String path = exchange.getRequest().getURI().getPath();
 
-    // allow public paths
-    for (String p : props.getPublicPaths()) {
-      if (matcher.match(p, path)) {
-        return chain.filter(exchange);
-      }
-    }
+    // Public paths
+    for (String p : props.getPublicPaths()) if (matcher.match(p, path)) return chain.filter(exchange);
 
-    // require Authorization: Bearer <token>
+    // Require Authorization
     String auth = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-    if (auth == null || !auth.startsWith("Bearer ")) {
-      return unauthorized(exchange, "Missing or invalid Authorization header");
-    }
+    if (auth == null || !auth.startsWith("Bearer ")) return unauthorized(exchange, "Missing or invalid Authorization header");
+    String token = auth.substring(7).trim();
+    if (!jwt.isValid(token)) return unauthorized(exchange, "Invalid or expired token");
 
-    String token = auth.substring(7);
-    if (!jwt.isValid(token)) {
-      return unauthorized(exchange, "Invalid or expired token");
-    }
-
-    // enrich headers for downstream services
     String user = jwt.getUsername(token);
-    String roles = String.join(",", jwt.getRoles(token));
+    Set<String> roles = jwt.getRoles(token).stream().map(r -> r.replace("ROLE_","")).collect(Collectors.toSet());
 
-    var mutated = exchange.getRequest().mutate()
+    var req = exchange.getRequest().mutate()
         .header("X-Auth-User", user)
-        .header("X-Auth-Roles", roles)
+        .header("X-Auth-Roles", String.join(",", roles))
         .build();
 
-    return chain.filter(exchange.mutate().request(mutated).build());
+    return chain.filter(exchange.mutate().request(req).build());
   }
 
-  @Override
-  public int getOrder() {
-    // run early
-    return -100;
-  }
+  @Override public int getOrder(){ return -100; }
 
-  private Mono<Void> unauthorized(ServerWebExchange exchange, String msg) {
+  private Mono<Void> unauthorized(ServerWebExchange exchange, String msg){
     var res = exchange.getResponse();
     res.setStatusCode(HttpStatus.UNAUTHORIZED);
     res.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-    var bytes = ("{\"error\":\"unauthorized\",\"message\":\"" + msg + "\"}")
-        .getBytes(StandardCharsets.UTF_8);
+    var bytes = ("{\"error\":\"unauthorized\",\"message\":\""+msg+"\"}").getBytes(StandardCharsets.UTF_8);
     return res.writeWith(Mono.just(res.bufferFactory().wrap(bytes)));
   }
 }

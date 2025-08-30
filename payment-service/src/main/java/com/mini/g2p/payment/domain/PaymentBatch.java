@@ -4,47 +4,30 @@ import jakarta.persistence.*;
 import java.time.Instant;
 
 @Entity
+@Table(name="payment_batches", indexes = { @Index(name="ix_batch_program", columnList="programId"), @Index(name="ix_batch_cycle", columnList="cycleId") })
 public class PaymentBatch {
-
   public enum Status { PENDING, PROCESSING, COMPLETED, FAILED }
 
-  @Id
-  @GeneratedValue(strategy = GenerationType.IDENTITY)
-  private Long id;
-
+  @Id @GeneratedValue(strategy=GenerationType.IDENTITY) private Long id;
   private Long programId;
+  private Long cycleId;
   private String createdBy;
-  private Instant createdAt = Instant.now();
+  @Column(updatable=false) private Instant createdAt;
+  @Enumerated(EnumType.STRING) @Column(nullable=false,length=20) private Status status = Status.PENDING;
+  private Integer totalCount;
+  private Integer successCount;
+  private Integer failedCount;
 
-  @Enumerated(EnumType.STRING)
-  private Status status = Status.PENDING;
+  @PrePersist void pre(){ if(createdAt==null) createdAt=Instant.now(); }
 
-  private Integer totalCount = 0;
-  private Integer successCount = 0;
-  private Integer failedCount = 0;
-
-  // Getters / Setters
-  public Long getId() { return id; }
-  public void setId(Long id) { this.id = id; }
-
-  public Long getProgramId() { return programId; }
-  public void setProgramId(Long programId) { this.programId = programId; }
-
-  public String getCreatedBy() { return createdBy; }
-  public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
-
-  public Instant getCreatedAt() { return createdAt; }
-  public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
-
-  public Status getStatus() { return status; }
-  public void setStatus(Status status) { this.status = status; }
-
-  public Integer getTotalCount() { return totalCount; }
-  public void setTotalCount(Integer totalCount) { this.totalCount = totalCount; }
-
-  public Integer getSuccessCount() { return successCount; }
-  public void setSuccessCount(Integer successCount) { this.successCount = successCount; }
-
-  public Integer getFailedCount() { return failedCount; }
-  public void setFailedCount(Integer failedCount) { this.failedCount = failedCount; }
+  // getters/setters
+  public Long getId(){return id;}
+  public Long getProgramId(){return programId;} public void setProgramId(Long v){this.programId=v;}
+  public Long getCycleId(){return cycleId;} public void setCycleId(Long v){this.cycleId=v;}
+  public String getCreatedBy(){return createdBy;} public void setCreatedBy(String v){this.createdBy=v;}
+  public Instant getCreatedAt(){return createdAt;} public void setCreatedAt(Instant v){this.createdAt=v;}
+  public Status getStatus(){return status;} public void setStatus(Status v){this.status=v;}
+  public Integer getTotalCount(){return totalCount;} public void setTotalCount(Integer v){this.totalCount=v;}
+  public Integer getSuccessCount(){return successCount;} public void setSuccessCount(Integer v){this.successCount=v;}
+  public Integer getFailedCount(){return failedCount;} public void setFailedCount(Integer v){this.failedCount=v;}
 }

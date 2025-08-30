@@ -1,4 +1,3 @@
-
 services:
   postgres:
     image: postgres:16
@@ -7,8 +6,10 @@ services:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
       POSTGRES_DB: authdb
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d
     ports: ["5432:5432"]
-    volumes: [pg_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d authdb"]
       interval: 5s
@@ -16,12 +17,12 @@ services:
       retries: 20
 
   rabbitmq:
-    image: rabbitmq:3.13-management
-    container_name: rabbit
+    image: rabbitmq:3-management
+    container_name: rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: app
       RABBITMQ_DEFAULT_PASS: app
-    ports: ["5672:5672", "15672:15672"]
+    ports: ["5672:5672","15672:15672"]
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 5s
@@ -29,37 +30,15 @@ services:
       retries: 20
 
   auth-service:
-    build:
-      context: ../auth-service
+    build: { context: ../auth-service }
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres: { condition: service_healthy }
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/authdb
       SPRING_DATASOURCE_USERNAME: app
       SPRING_DATASOURCE_PASSWORD: app
+      JWT_SECRET: a6f3d8c2b7944f12a17d05c6b9f82a7d3e1f74c5a94e89b15b3f0c7e1a2d9f5c
       APP_JWT_SECRET: a6f3d8c2b7944f12a17d05c6b9f82a7d3e1f74c5a94e89b15b3f0c7e1a2d9f5c
-    ports: ["8081:8081"]
-
-  gateway-service:
-    build:
-      context: ../gateway-service
-    depends_on:
-      auth-service:
-        condition: service_started
-    environment:
-      APP_JWT_SECRET: a6f3d8c2b7944f12a17d05c6b9f82a7d3e1f74c5a94e89b15b3f0c7e1a2d9f5c
-    ports: ["8080:8080"]
-  
-  program-catalog-service:
-    build: { context: ../program-catalog-service }
-    depends_on:
-      postgres: { condition: service_healthy }
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/programdb
-      SPRING_DATASOURCE_USERNAME: app
-      SPRING_DATASOURCE_PASSWORD: app
-    ports: ["8085:8085"]
 
   profile-service:
     build: { context: ../profile-service }
@@ -69,7 +48,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/profiledb
       SPRING_DATASOURCE_USERNAME: app
       SPRING_DATASOURCE_PASSWORD: app
-    ports: ["8083:8083"]
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_OPEN_IN_VIEW: "false"
 
   enrollment-service:
     build: { context: ../enrollment-service }
@@ -77,11 +57,25 @@ services:
       postgres: { condition: service_healthy }
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/enrollmentdb
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_OPEN_IN_VIEW: "false"
       SPRING_DATASOURCE_USERNAME: app
       SPRING_DATASOURCE_PASSWORD: app
-      PROGRAM_CATALOG_URL: http://program-catalog-service:8085
-      PROFILE_URL: http://profile-service:8083
-    ports: ["8084:8084"]
+      PROGRAM_CATALOG_BASEURL: http://program-catalog-service:8085
+      PROFILE_BASEURL: http://profile-service:8082
+
+  program-catalog-service:
+    build: { context: ../program-catalog-service }
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/programdb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: app
+      ENROLLMENT_BASEURL: http://enrollment-service:8084
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_OPEN_IN_VIEW: "false"
+
 
   payment-service:
     build: { context: ../payment-service }
@@ -96,9 +90,11 @@ services:
       SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: app
       SPRING_RABBITMQ_PASSWORD: app
-    ports:
-      - "8086:8086"
-      
+      PROGRAM_CATALOG_BASEURL: http://program-catalog-service:8085
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_OPEN_IN_VIEW: "false"
+
+
   mockbank-service:
     build: { context: ../mockbank-service }
     depends_on:
@@ -108,8 +104,21 @@ services:
       SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: app
       SPRING_RABBITMQ_PASSWORD: app
-    ports:
-      - "8087:8087"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_OPEN_IN_VIEW: "false"
+
+  gateway-service:
+    build: { context: ../gateway-service }
+    depends_on:
+      auth-service: { condition: service_started }
+      profile-service: { condition: service_started }
+      program-catalog-service: { condition: service_started }
+      enrollment-service: { condition: service_started }
+      payment-service: { condition: service_started }
+    environment:
+      JWT_SECRET: a6f3d8c2b7944f12a17d05c6b9f82a7d3e1f74c5a94e89b15b3f0c7e1a2d9f5c
+      APP_JWT_SECRET: a6f3d8c2b7944f12a17d05c6b9f82a7d3e1f74c5a94e89b15b3f0c7e1a2d9f5c
+    ports: ["8080:8080"]
 
 volumes:
   pg_data:

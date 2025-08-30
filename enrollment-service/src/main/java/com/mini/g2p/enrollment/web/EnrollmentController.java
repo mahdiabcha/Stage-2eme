@@ -2,205 +2,147 @@ package com.mini.g2p.enrollment.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mini.g2p.enrollment.domain.Enrollment;
 import com.mini.g2p.enrollment.dto.BeneficiaryDtos.BeneficiaryItem;
 import com.mini.g2p.enrollment.repo.EnrollmentRepository;
 import com.mini.g2p.enrollment.service.EligibilityService;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ResponseStatusException;
-import reactor.core.publisher.Mono;
-
-import java.net.URI;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping
 public class EnrollmentController {
 
-  private final WebClient profileClient;
-  private final WebClient programClient;
   private final EnrollmentRepository repo;
   private final EligibilityService eligibility;
-  private final ObjectMapper om;
+  private final WebClient programClient;
+  private final WebClient profileClient;
+  private final ObjectMapper M = new ObjectMapper();
 
-  public EnrollmentController(WebClient profileClient,
-                              WebClient programCatalogClient,
-                              EnrollmentRepository repo,
-                              EligibilityService eligibility,
-                              ObjectMapper objectMapper) {
-    this.profileClient = profileClient;
-    this.programClient = programCatalogClient;
-    this.repo = repo;
-    this.eligibility = eligibility;
-    this.om = objectMapper;
+  public EnrollmentController(EnrollmentRepository repo, EligibilityService eligibility,
+                              @Qualifier("programClient") WebClient programClient,
+                              @Qualifier("profileClient") WebClient profileClient) {
+    this.repo = repo; this.eligibility = eligibility; this.programClient = programClient; this.profileClient = profileClient;
   }
 
-  @PostMapping("/programs/{programId}/eligibility/check")
-  public Map<String, Object> check(@RequestHeader HttpHeaders headers,
-                                   @PathVariable long programId) {
-    String user = SecurityHelpers.currentUser(headers);
+  // ---- Helpers ----
+  private JsonNode fetchProgram(long programId, HttpHeaders headers) {
+    return programClient.get().uri("/programs/{id}", programId)
+        .headers(h -> forward(headers, h))
+        .retrieve().bodyToMono(JsonNode.class).blockOptional()
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Program not found"));
+  }
+  private JsonNode fetchMyProfile(HttpHeaders headers) {
+    return profileClient.get().uri("/profiles/me").headers(h -> forward(headers, h))
+        .retrieve().bodyToMono(JsonNode.class).blockOptional()
+        .orElse(M.createObjectNode());
+  }
+  private void forward(HttpHeaders from, HttpHeaders to){
+    for (String k : List.of("Authorization","X-Auth-User","X-Auth-Roles")) {
+      String v = from.getFirst(k); if (v!=null) to.set(k, v);
+    }
+  }
+  private boolean nonEmpty(Object o){ return o!=null && !String.valueOf(o).isBlank(); }
+  private boolean profileComplete(JsonNode p){
+    return nonEmpty(p.get("firstName")) && nonEmpty(p.get("lastName")) && nonEmpty(p.get("birthDate"))
+        && nonEmpty(p.get("governorate")) && p.hasNonNull("householdSize") && p.hasNonNull("incomeMonthly")
+        && p.hasNonNull("kycVerified") && p.get("kycVerified").asBoolean(false);
+  }
 
-    JsonNode profile = safeFetchProfile(user, headers);
+  // ---------- Check eligibility ----------
+  @GetMapping("/programs/{programId}/eligibility/check")
+  public Map<String,Object> check(@RequestHeader HttpHeaders headers, @PathVariable long programId){
+    JsonNode profile = fetchMyProfile(headers);
     JsonNode program = fetchProgram(programId, headers);
-    String rulesJson = program.path("rulesJson").isMissingNode() ? "{}" : program.get("rulesJson").asText("{}");
-
+    String rules = program.path("rulesJson").asText("{}");
     var ctx = eligibility.contextFromProfile(profile);
-    var res = eligibility.evaluate(ctx, rulesJson);
-
+    var res = eligibility.evaluate(ctx, rules);
     return Map.of("eligible", res.eligible, "reason", res.reason);
   }
 
+  // ---------- Enroll ----------
   @PostMapping("/programs/{programId}/enroll")
-  public ResponseEntity<?> enroll(@RequestHeader HttpHeaders headers,
-                                  @PathVariable long programId,
-                                  @RequestBody(required = false) Map<String, Object> body) {
+  public ResponseEntity<?> enroll(@RequestHeader HttpHeaders headers, @PathVariable long programId) {
     String user = SecurityHelpers.currentUser(headers);
+    if (user == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "no user");
 
-    JsonNode profile = safeFetchProfile(user, headers);
     JsonNode program = fetchProgram(programId, headers);
-
     String state = program.path("state").asText("DRAFT");
-    if (!"ACTIVE".equalsIgnoreCase(state)) {
-      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Program is not ACTIVE");
-    }
+    if (!"ACTIVE".equalsIgnoreCase(state)) throw new ResponseStatusException(HttpStatus.CONFLICT, "program not ACTIVE");
 
-    String rulesJson = program.path("rulesJson").isMissingNode() ? "{}" : program.get("rulesJson").asText("{}");
+    JsonNode profile = fetchMyProfile(headers);
+    if (!profileComplete(profile)) throw new ResponseStatusException(HttpStatus.CONFLICT, "profile incomplete");
+
+    String rules = program.path("rulesJson").asText("{}");
     var ctx = eligibility.contextFromProfile(profile);
-    var res = eligibility.evaluate(ctx, rulesJson);
-    if (!res.eligible) {
-      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "Not eligible: " + res.reason);
-    }
+    var res = eligibility.evaluate(ctx, rules);
+    if (!res.eligible) throw new ResponseStatusException(HttpStatus.CONFLICT, "not eligible: " + res.reason);
+
+    boolean exists = repo.existsByProgramIdAndCitizenUsernameAndStatusIn(programId, user,
+        List.of(Enrollment.Status.PENDING, Enrollment.Status.APPROVED));
+    if (exists) return ResponseEntity.status(409).body(Map.of("error","already enrolled (pending or approved)"));
 
     Enrollment e = new Enrollment();
-    e.setProgramId(programId);
-    e.setCitizenUsername(user);
-    e.setUsername(user); // satisfy legacy NOT NULL "username"
+    e.setProgramId(programId); e.setCitizenUsername(user);
     e.setStatus(Enrollment.Status.PENDING);
-    if (body != null && body.get("note") instanceof String n) e.setNote(n);
-
-    e.setEligibilityPassed(true);
-    e.setEligibilityReason(res.reason);
-    e.setEligibilityCheckedAt(Instant.now());
-
-    e = repo.save(e);
-
-    Map<String,Object> out = Map.of(
-        "id", e.getId(),
-        "programId", e.getProgramId(),
-        "username", e.getCitizenUsername(),
-        "status", e.getStatus().name(),
-        "note", e.getNote(),
-        "eligibilityPassed", e.isEligibilityPassed(),
-        "eligibilityReason", e.getEligibilityReason(),
-        "createdAt", e.getCreatedAt()
-    );
-    return ResponseEntity.created(URI.create("/enrollments/" + e.getId())).body(out);
-  }
-
-  @PatchMapping("/enrollments/{id}/status")
-  public Map<String, Object> updateStatus(@RequestHeader HttpHeaders headers,
-                                          @PathVariable long id,
-                                          @RequestParam("value") String value,
-                                          @RequestBody(required = false) Map<String, Object> body) {
-    if (!SecurityHelpers.hasRole(headers, "ADMIN") && !SecurityHelpers.hasRole(headers, "AGENT")) {
-      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Requires ADMIN or AGENT");
-    }
-    Enrollment e = repo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Enrollment not found"));
-
-    Enrollment.Status newStatus;
-    try {
-      newStatus = Enrollment.Status.valueOf(value.toUpperCase(Locale.ROOT));
-    } catch (IllegalArgumentException ex) {
-      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid status value");
-    }
-    e.setStatus(newStatus);
-    if (body != null && body.get("note") instanceof String n) e.setNote(n);
+    e.setEligibilityPassed(true); e.setEligibilityReason("OK"); e.setEligibilityCheckedAt(Instant.now());
+    e.setCreatedAt(Instant.now()); e.setUpdatedAt(Instant.now());
     repo.save(e);
-
-    return Map.of(
-        "id", e.getId(),
-        "programId", e.getProgramId(),
-        "username", e.getCitizenUsername(),
-        "status", e.getStatus().name(),
-        "note", e.getNote(),
-        "createdAt", e.getCreatedAt()
-    );
+    return ResponseEntity.ok(Map.of("id", e.getId(), "status", e.getStatus()));
   }
 
+  // ---------- My enrollments ----------
+@GetMapping("/enrollments/my")
+public List<Map<String,Object>> my(@RequestHeader HttpHeaders headers){
+  String user = SecurityHelpers.currentUser(headers);
+  if (user == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "no user");
+
+  return repo.findByCitizenUsernameOrderByCreatedAtDesc(user).stream()
+      .<Map<String,Object>>map(e -> Map.<String,Object>of(
+          "id", e.getId(),
+          "programId", e.getProgramId(),
+          "status", e.getStatus(),
+          "eligibilityPassed", e.isEligibilityPassed(),
+          "eligibilityReason", e.getEligibilityReason(),
+          "createdAt", e.getCreatedAt(),
+          "updatedAt", e.getUpdatedAt()
+      ))
+      .toList(); // ou .collect(Collectors.toList()) si tu préfères
+}
+
+
+  // ---------- Beneficiaries (admin) ----------
   @GetMapping("/programs/{programId}/beneficiaries")
-  public List<BeneficiaryItem> listBeneficiaries(@RequestHeader HttpHeaders headers,
-                                                 @PathVariable long programId,
-                                                 @RequestParam(name = "status", required = false) String status) {
-    if (!SecurityHelpers.hasRole(headers, "ADMIN") && !SecurityHelpers.hasRole(headers, "AGENT")) {
-      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Requires ADMIN or AGENT");
-    }
-
-    List<Enrollment> list;
-    if (status == null || status.isBlank()) {
-      list = repo.findByProgramIdOrderByCreatedAtDesc(programId);
-    } else {
-      Enrollment.Status st;
-      try { st = Enrollment.Status.valueOf(status.toUpperCase(Locale.ROOT)); }
-      catch (IllegalArgumentException ex) { throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid status"); }
-      list = repo.findByProgramIdAndStatusOrderByCreatedAtDesc(programId, st);
-    }
-
-    return list.stream()
-        .map(e -> new BeneficiaryItem(
-            e.getId(),
-            e.getProgramId(),
-            e.getCitizenUsername(),
-            e.getStatus().name(),
-            e.getNote(),
-            e.getCreatedAt()))
-        .collect(Collectors.toList());
+  public List<BeneficiaryItem> beneficiaries(@RequestHeader HttpHeaders headers, @PathVariable long programId,
+                                             @RequestParam(value="status",required=false) String status) {
+    if (!SecurityHelpers.hasRole(headers,"ADMIN")) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "ADMIN only");
+    List<Enrollment.Status> filter = status!=null? List.of(Enrollment.Status.valueOf(status.toUpperCase())) : null;
+    var list = filter==null? repo.findByProgramIdOrderByCreatedAtDesc(programId)
+                           : repo.findByProgramIdAndStatusOrderByCreatedAtDesc(programId, filter.get(0));
+    return list.stream().map(e -> new BeneficiaryItem(e.getId(), e.getProgramId(), e.getCitizenUsername(), e.getStatus().name(), e.getEligibilityReason(), e.getCreatedAt())).toList();
   }
 
-  private JsonNode safeFetchProfile(String username, HttpHeaders incoming) {
-    return profileClient.get()
-        .uri("/profiles/{u}", username)
-        .headers(h -> forwardAuthHeaders(incoming, h))
-        .exchangeToMono(resp -> handleProfileResponse(resp, username))
-        .block();
+  // ---------- Approve / Reject ----------
+  @PatchMapping("/enrollments/{id}/approve")
+  public Map<String,Object> approve(@RequestHeader HttpHeaders h, @PathVariable long id){
+    if (!SecurityHelpers.hasRole(h,"ADMIN")) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"ADMIN only");
+    var e = repo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+    e.setStatus(Enrollment.Status.APPROVED); e.setUpdatedAt(Instant.now()); repo.save(e);
+    return Map.of("status","APPROVED");
   }
 
-  private Mono<JsonNode> handleProfileResponse(ClientResponse resp, String username) {
-    if (resp.statusCode().is2xxSuccessful()) {
-      return resp.bodyToMono(JsonNode.class);
-    }
-    if (resp.rawStatusCode() == 404) {
-      ObjectNode minimal = om.createObjectNode();
-      minimal.put("username", username);
-      minimal.put("kycVerified", true);
-      return Mono.just(minimal);
-    }
-    return resp.createException().flatMap(Mono::error);
-  }
-
-  private JsonNode fetchProgram(long programId, HttpHeaders incoming) {
-    return programClient.get()
-        .uri("/programs/{id}", programId)
-        .headers(h -> forwardAuthHeaders(incoming, h))
-        .retrieve()
-        .bodyToMono(JsonNode.class)
-        .blockOptional()
-        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Program not found"));
-  }
-
-  private void forwardAuthHeaders(HttpHeaders from, HttpHeaders to) {
-    String u = from.getFirst("X-Auth-User");
-    String r = from.getFirst("X-Auth-Roles");
-    String auth = from.getFirst(HttpHeaders.AUTHORIZATION);
-    if (u != null) to.set("X-Auth-User", u);
-    if (r != null) to.set("X-Auth-Roles", r);
-    if (auth != null) to.set(HttpHeaders.AUTHORIZATION, auth);
+  @PatchMapping("/enrollments/{id}/reject")
+  public Map<String,Object> reject(@RequestHeader HttpHeaders h, @PathVariable long id, @RequestBody(required=false) Map<String,Object> body){
+    if (!SecurityHelpers.hasRole(h,"ADMIN")) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"ADMIN only");
+    var e = repo.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+    e.setStatus(Enrollment.Status.REJECTED);
+    if (body!=null && body.get("note")!=null) e.setEligibilityReason(String.valueOf(body.get("note")));
+    e.setUpdatedAt(Instant.now()); repo.save(e);
+    return Map.of("status","REJECTED");
   }
 }

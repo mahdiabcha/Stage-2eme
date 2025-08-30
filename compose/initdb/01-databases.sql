@@ -1,0 +1,4 @@
+CREATE DATABASE profiledb OWNER app;
+CREATE DATABASE programdb OWNER app;
+CREATE DATABASE enrollmentdb OWNER app;
+CREATE DATABASE paymentdb OWNER app;

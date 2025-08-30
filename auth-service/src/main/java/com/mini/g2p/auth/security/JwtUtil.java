@@ -4,49 +4,45 @@ import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
-import java.util.Date;
-import java.util.Map;
+import java.util.*;
 
-////service////////////
 @Component
 public class JwtUtil {
 
-  private final Key key;
-  private final long expirationMs;
+  @Value("${app.jwt.secret}")
+  private String secret;
 
-  public JwtUtil(
-      @Value("${app.jwt.secret}") String secret,
-      @Value("${app.jwt.expiration}") long expiration) {
-    this.key = Keys.hmacShaKeyFor(secret.getBytes());
-    this.expirationMs = expiration;
-  }
+  @Value("${app.jwt.expiration:3600000}")
+  private long expirationMs;
 
-  public String generate(String subject, Map<String, Object> claims) {
-    long now = System.currentTimeMillis();
+  private Key key() { return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)); }
+
+  public String generateToken(String username, Map<String,Object> claims) {
+    Date now = new Date();
+    Date exp = new Date(now.getTime() + expirationMs);
     return Jwts.builder()
-        .setSubject(subject)
+        .setSubject(username)
         .addClaims(claims)
-        .setIssuedAt(new Date(now))
-        .setExpiration(new Date(now + expirationMs))
-        .signWith(key, SignatureAlgorithm.HS256)
+        .setIssuedAt(now)
+        .setExpiration(exp)
+        .signWith(key(), SignatureAlgorithm.HS256)
         .compact();
   }
 
-  public Jws<Claims> parse(String token) {
-    return Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
-  }
-
   public boolean isValid(String token) {
-    try {
-      parse(token);
-      return true;
-    } catch (JwtException | IllegalArgumentException e) {
-      return false;
-    }
+    try { parse(token); return true; }
+    catch (JwtException | IllegalArgumentException e) { return false; }
   }
 
-  public String getUsername(String token) {
-    return parse(token).getBody().getSubject();
+  private Jws<Claims> parse(String token) { return Jwts.parserBuilder().setSigningKey(key()).build().parseClaimsJws(token); }
+
+  public String getUsername(String token) { return parse(token).getBody().getSubject(); }
+
+  public List<String> getRoles(String token) {
+    Object r = parse(token).getBody().get("roles");
+    if (r instanceof Collection<?> c) return c.stream().map(String::valueOf).toList();
+    return List.of();
   }
 }
