@@ -151,27 +151,35 @@ public class EligibilityService {
     return String.valueOf(actual).compareToIgnoreCase(expected.asText());
   }
 
-  public Map<String, Object> contextFromProfile(JsonNode prof) {
-    Map<String, Object> m = new HashMap<>();
-    if (prof == null) return m;
+public Map<String, Object> contextFromProfile(JsonNode prof) {
+  Map<String, Object> m = new HashMap<>();
+  if (prof == null) return m;
 
-    putText(m, "username", prof, "username");
-    putText(m, "gender", prof, "gender");
-    putText(m, "governorate", prof, "governorate");
-    putNum(m, "householdSize", prof, "householdSize");
-    putNum(m, "incomeMonthly", prof, "incomeMonthly");
-    putBool(m, "kycVerified", prof, "kycVerified");
+  putText(m, "username", prof, "username");
+  putText(m, "gender", prof, "gender");
+  putText(m, "governorate", prof, "governorate");
+  putNum(m, "householdSize", prof, "householdSize");
+  putNum(m, "incomeMonthly", prof, "incomeMonthly");
+  putBool(m, "kycVerified", prof, "kycVerified");
 
-    String bd = prof.has("birthDate") && !prof.get("birthDate").isNull() ? prof.get("birthDate").asText(null) : null;
-    if (bd != null) {
-      try {
-        var ld = LocalDate.parse(bd);
-        int age = Period.between(ld, LocalDate.now()).getYears();
-        m.put("age", age);
-      } catch (Exception ignored) { }
-    }
-    return m;
+  // Accept both keys: birthDate (old) and dateOfBirth (current)
+  String bd = null;
+  if (prof.hasNonNull("birthDate")) {
+    bd = prof.get("birthDate").asText();
+  } else if (prof.hasNonNull("dateOfBirth")) {
+    bd = prof.get("dateOfBirth").asText();
   }
+
+  if (bd != null && !bd.isBlank()) {
+    try {
+      LocalDate ld = LocalDate.parse(bd);
+      int age = Period.between(ld, LocalDate.now()).getYears();
+      m.put("age", age);
+    } catch (Exception ignored) { }
+  }
+  return m;
+}
+
 
   private void putText(Map<String,Object> m, String key, JsonNode n, String k) {
     if (n.has(k) && !n.get(k).isNull()) m.put(key, n.get(k).asText());

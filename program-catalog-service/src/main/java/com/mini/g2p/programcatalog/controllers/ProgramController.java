@@ -15,6 +15,11 @@ public class ProgramController {
   @PostMapping("/programs")
   public ResponseEntity<?> create(@RequestBody Program p){ return ResponseEntity.ok(programs.save(p)); }
 
+  @GetMapping("/programs")
+  public java.util.List<Program> list() {
+    return programs.findAll();
+  }
+
   @GetMapping("/programs/{id}")
   public ResponseEntity<?> get(@PathVariable Long id){
     return programs.findById(id).<ResponseEntity<?>>map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());

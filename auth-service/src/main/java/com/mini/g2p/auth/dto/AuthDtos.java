@@ -8,6 +8,7 @@ public final class AuthDtos {
     @NotBlank public String username;
     @NotBlank public String password;
     @NotBlank @Pattern(regexp="^[0-9]{8}$") public String nationalId;
+    public String role;
   }
   public static final class LoginRequest { @NotBlank public String username; @NotBlank public String password; }
   public static final class AuthResponse { public String token; public AuthResponse(String t){this.token=t;} }

@@ -10,6 +10,7 @@ import org.springframework.security.authentication.*;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+
 import java.time.Instant;
 import java.util.*;
 
@@ -17,33 +18,52 @@ import java.util.*;
 @RequestMapping("/auth")
 public class AuthController {
 
-  private final UserRepository users;
-  private final PasswordEncoder encoder;
-  private final JwtUtil jwt;
   private final AuthenticationManager authManager;
+  private final PasswordEncoder encoder;
+  private final UserRepository users;
+  private final JwtUtil jwt;
 
-  public AuthController(UserRepository users, PasswordEncoder encoder, JwtUtil jwt, AuthenticationManager authManager) {
-    this.users = users; this.encoder = encoder; this.jwt = jwt; this.authManager = authManager;
+  public AuthController(AuthenticationManager authManager, PasswordEncoder encoder, UserRepository users, JwtUtil jwt) {
+    this.authManager = authManager;
+    this.encoder = encoder;
+    this.users = users;
+    this.jwt = jwt;
   }
 
   @PostMapping("/register")
   public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest in) {
-    if (users.existsByUsername(in.username)) return ResponseEntity.status(409).body(new ErrorResponse("username exists"));
-    if (users.existsByNationalId(in.nationalId)) return ResponseEntity.status(409).body(new ErrorResponse("nationalId exists"));
+    if (users.findByUsername(in.username).isPresent()) {
+      return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse("Username already exists"));
+    }
 
     User u = new User();
-    u.setUsername(in.username); u.setNationalId(in.nationalId);
+    u.setUsername(in.username);
+    u.setNationalId(in.nationalId);
     u.setPasswordHash(encoder.encode(in.password));
-    u.setRoles(Set.of("CITIZEN"));
     u.setCreatedAt(Instant.now());
+
+    // role mapping: AGENT -> ADMIN (+CITIZEN), else CITIZEN
+    Set<String> roles = new HashSet<>();
+    String role = (in.role == null ? "" : in.role.trim().toUpperCase(Locale.ROOT));
+    if ("AGENT".equals(role) || "ADMIN".equals(role)) {
+      roles.add("ADMIN");
+      roles.add("CITIZEN"); // keep citizen abilities too if your app expects it
+    } else {
+      roles.add("CITIZEN");
+    }
+    u.setRoles(roles);
+
     users.save(u);
-    return ResponseEntity.status(201).body(Map.of("message","registered"));
+    return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("message","registered"));
   }
 
   @PostMapping("/login")
   public ResponseEntity<?> login(@Valid @RequestBody LoginRequest in) {
-    try { authManager.authenticate(new UsernamePasswordAuthenticationToken(in.username, in.password)); }
-    catch (BadCredentialsException ex) { return ResponseEntity.status(401).body(new ErrorResponse("Bad credentials")); }
+    try {
+      authManager.authenticate(new UsernamePasswordAuthenticationToken(in.username, in.password));
+    } catch (BadCredentialsException ex) {
+      return ResponseEntity.status(401).body(new ErrorResponse("Bad credentials"));
+    }
     var u = users.findByUsername(in.username).orElseThrow();
     String token = jwt.generateToken(u.getUsername(), Map.of("roles", u.getRoles()));
     return ResponseEntity.ok(new AuthResponse(token));

@@ -48,11 +48,21 @@ public class EnrollmentController {
     }
   }
   private boolean nonEmpty(Object o){ return o!=null && !String.valueOf(o).isBlank(); }
-  private boolean profileComplete(JsonNode p){
-    return nonEmpty(p.get("firstName")) && nonEmpty(p.get("lastName")) && nonEmpty(p.get("birthDate"))
-        && nonEmpty(p.get("governorate")) && p.hasNonNull("householdSize") && p.hasNonNull("incomeMonthly")
-        && p.hasNonNull("kycVerified") && p.get("kycVerified").asBoolean(false);
-  }
+private boolean profileComplete(JsonNode p){
+  boolean hasDob =
+      (p.hasNonNull("birthDate")    && !String.valueOf(p.get("birthDate").asText("")).isBlank())
+   || (p.hasNonNull("dateOfBirth") && !String.valueOf(p.get("dateOfBirth").asText("")).isBlank());
+
+  return nonEmpty(p.get("firstName"))
+      && nonEmpty(p.get("lastName"))
+      && hasDob
+      && nonEmpty(p.get("governorate"))
+      && p.hasNonNull("householdSize")
+      && p.hasNonNull("incomeMonthly")
+      && p.hasNonNull("kycVerified")
+      && p.get("kycVerified").asBoolean(false);
+}
+
 
   // ---------- Check eligibility ----------
   @GetMapping("/programs/{programId}/eligibility/check")

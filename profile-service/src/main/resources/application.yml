@@ -1,6 +1,3 @@
-server:
-  port: 8083
-
 spring:
   application:
     name: profile-service
@@ -16,17 +13,12 @@ spring:
       hibernate:
         jdbc:
           time_zone: UTC
+        lob:
+          non_contextual_creation: true
   servlet:
     multipart:
       max-file-size: 20MB
       max-request-size: 20MB
-
-app:
-  uploads:
-    dir: ${UPLOADS_DIR:./uploads}
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info
+  web:
+    resources:
+      static-locations: file:./uploads/

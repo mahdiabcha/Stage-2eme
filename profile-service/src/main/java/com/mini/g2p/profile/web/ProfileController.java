@@ -1,3 +1,4 @@
+
 package com.mini.g2p.profile.web;
 
 import com.mini.g2p.profile.domain.CitizenProfile;

@@ -19,6 +19,10 @@ public class ProgramCycleController {
 
   public record CreateCycleReq(String name, java.time.LocalDate startDate, java.time.LocalDate endDate){}
 
+  @GetMapping("/programs/{programId}/cycles")
+  public java.util.List<ProgramCycle> listByProgram(@PathVariable Long programId) {
+    return cycles.findByProgramIdOrderByIdDesc(programId);
+  }
   @PostMapping("/programs/{programId}/cycles")
   public ResponseEntity<?> create(@PathVariable Long programId, @RequestBody CreateCycleReq req) {
     var p = programs.findById(programId).orElse(null);
